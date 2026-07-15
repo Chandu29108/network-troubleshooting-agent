@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #232B34 transparent;
+}
+*:focus-visible {
+  outline: 2px solid #2DD4C6;
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #232B34;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(35, 43, 52, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(35, 43, 52, 0.35) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
