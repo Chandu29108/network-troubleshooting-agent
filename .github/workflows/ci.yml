@@ -18,13 +18,18 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
       - name: Compile check
         run: python -m compileall app
       - name: Lint (ruff)
         run: |
           pip install ruff
-          ruff check app --exit-zero
+          ruff check app
+      - name: Tests
+        env:
+          GOOGLE_API_KEY: ci-placeholder-key
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+        run: pytest tests/ -v
 
   frontend:
     runs-on: ubuntu-latest
@@ -39,7 +44,7 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
-        run: npm install
+        run: npm ci
       - name: Build
         run: npm run build
         env:
@@ -53,4 +58,4 @@ jobs:
       - name: Build backend image
         run: docker build -t netagent-backend ./backend
       - name: Build frontend image
-        run: docker build -t netagent-frontend ./frontend
+        run: docker build -t netagent-frontend ./frontend --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000

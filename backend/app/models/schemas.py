@@ -3,16 +3,21 @@ Pydantic schemas define the API's data contract. Keeping them separate from
 DB models and LangGraph state means each layer can evolve independently —
 e.g. we can add a field to the DB table without breaking the API response.
 """
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    conversation_id: Optional[str] = Field(
+    conversation_id: str | None = Field(
         default=None,
         description="Existing conversation to continue. Omit to start a new one.",
     )
-    message: str = Field(..., min_length=1, description="User's message / router log / question")
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=20000,
+        description="User's message / router log / question",
+    )
 
 
 class Citation(BaseModel):

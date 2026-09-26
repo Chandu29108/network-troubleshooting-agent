@@ -6,7 +6,7 @@ knowledge base used by retrieval_node, so future diagnoses can cite them.
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.core.logging_config import logger
 from app.models.schemas import DocumentUploadResponse

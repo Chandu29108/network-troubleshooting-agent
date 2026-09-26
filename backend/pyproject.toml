@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "PL"]
+ignore = [
+    "B008",    # FastAPI's Depends()/File() in defaults is the idiomatic pattern, not a bug
+    "PLW0603", # lazy-singleton `global` in get_embeddings() is deliberate, not accidental global mutation
+    "PLR2004", # small inline bounds (e.g. RFC 1035's 255-char hostname limit) don't need named constants
+]

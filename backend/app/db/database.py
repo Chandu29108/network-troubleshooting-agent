@@ -8,7 +8,8 @@ Why SQLite by default: zero setup, zero cost, a single file. Because we only
 talk to the DB through SQLAlchemy's ORM (see db/models.py), switching to
 Postgres later is just changing DATABASE_URL in .env — no code changes.
 """
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from app.config import get_settings
 from app.db.models import Base
 

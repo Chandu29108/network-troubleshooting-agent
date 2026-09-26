@@ -12,6 +12,7 @@ Patterns cover common Cisco/Juniper-style syslog messages. Extend
 `PATTERNS` to support more vendors/formats as needed.
 """
 import re
+
 from langchain_core.tools import tool
 
 PATTERNS = {

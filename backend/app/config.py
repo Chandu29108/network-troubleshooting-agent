@@ -6,6 +6,7 @@ GOOGLE_API_KEY is missing) instead of failing deep inside a LangGraph node
 where it's harder to debug.
 """
 from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,12 +16,17 @@ class Settings(BaseSettings):
     google_api_key: str
     gemini_model: str = "gemini-1.5-flash"
 
-    database_url: str = "sqlite+aiosqlite:///./netagent.db"
+    database_url: str = "sqlite+aiosqlite:///./data/netagent.db"
 
     chroma_persist_dir: str = "./chroma_store"
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
 
-    frontend_origin: str = "http://localhost:3000"
+    # Comma-separated in .env, e.g. FRONTEND_ORIGINS=http://localhost:3000,https://app.example.com
+    frontend_origins: str = "http://localhost:3000"
+
+    @property
+    def frontend_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.frontend_origins.split(",") if origin.strip()]
 
 
 @lru_cache

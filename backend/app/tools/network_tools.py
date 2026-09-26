@@ -39,6 +39,7 @@ def ping_host(host: str) -> str:
             capture_output=True,
             text=True,
             timeout=15,
+            check=False,
         )
         output = result.stdout or result.stderr
         return output.strip() or "No output returned from ping."
@@ -60,15 +61,16 @@ def traceroute_host(host: str) -> str:
         return error
     try:
         result = subprocess.run(
-            ["tracert", "-h", "12", "-w", "2000", host],
+            ["traceroute", "-m", "12", "-w", "2", host],
             capture_output=True,
             text=True,
             timeout=25,
+            check=False,
         )
         output = result.stdout or result.stderr
-        return output.strip() or "No output returned from tracert."
+        return output.strip() or "No output returned from traceroute."
     except FileNotFoundError:
-        return "tracert command not available in this environment."
+        return "traceroute command not available in this environment."
     except subprocess.TimeoutExpired:
         return f"Traceroute to {host} timed out."
 

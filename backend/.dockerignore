@@ -1,0 +1,10 @@
+agents/
+__pycache__/
+*.pyc
+*.db
+chroma_store/
+.env
+.env.local
+.pytest_cache/
+tests/
+.git/

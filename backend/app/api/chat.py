@@ -24,14 +24,16 @@ from app.agents.nodes import _extract_text
 from app.core.logging_config import logger
 from app.db.database import get_session
 from app.db.models import Conversation, Message
-from app.models.schemas import ChatRequest, ConversationOut, ChatMessageOut
+from app.models.schemas import ChatMessageOut, ChatRequest, ConversationOut
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 async def _load_history(session: AsyncSession, conversation_id: str) -> list[dict]:
     result = await session.execute(
-        select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at)
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at)
     )
     return [{"role": m.role, "content": m.content} for m in result.scalars().all()]
 

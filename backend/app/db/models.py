@@ -9,7 +9,7 @@ LangGraph state, so the agent remembers earlier symptoms the user described.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, ForeignKey, DateTime
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
