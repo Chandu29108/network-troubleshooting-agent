@@ -19,6 +19,8 @@ import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+import httpx
+
 from app.core.logging_config import logger
 
 MAX_ATTEMPTS = 3
@@ -36,8 +38,22 @@ FRIENDLY_GENERIC_MESSAGE = (
 
 
 def is_transient_error(exc: BaseException) -> bool:
-    """True for temporary provider errors (503 overload, 429 rate limit, ...)."""
-    return getattr(exc, "code", None) in TRANSIENT_STATUS_CODES
+    """True for temporary provider errors (503 overload, 429 rate limit, ...)
+    and for network-level failures (read timeouts, connection resets, ...).
+
+    A real production traceback caught this: `httpx.ReadTimeout` (Gemini's
+    streaming API taking too long to respond) has no `.code` attribute at
+    all, so the original check here -- code-only -- silently treated a
+    timeout as non-transient and never retried it, going straight to the
+    generic failure message on attempt 1. A dropped/slow connection to the
+    LLM provider is exactly as recoverable as a 503 and deserves the same
+    retry treatment.
+    """
+    if getattr(exc, "code", None) in TRANSIENT_STATUS_CODES:
+        return True
+    # Covers httpx.ReadTimeout, ConnectTimeout, WriteTimeout, PoolTimeout,
+    # ConnectError, and any other network-transport-level failure.
+    return isinstance(exc, httpx.TransportError)
 
 
 def friendly_error_message(exc: BaseException) -> str:

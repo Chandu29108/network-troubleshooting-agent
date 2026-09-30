@@ -4,6 +4,7 @@ Tests for transient-LLM-error handling. Uses a fake exception carrying a
 network or real API key is involved, and zeroes the retry delay so the
 suite stays fast.
 """
+import httpx
 import pytest
 
 from app.core import resilience
@@ -58,6 +59,30 @@ def test_invoke_gives_up_after_max_attempts():
     with pytest.raises(FakeAPIError):
         resilience.invoke_with_retry(always_down)
     assert calls["n"] == resilience.MAX_ATTEMPTS
+
+
+def test_network_timeout_is_transient():
+    """Regression test: a real production traceback showed httpx.ReadTimeout
+    (Gemini's streaming API taking too long) was NOT being retried, because
+    it has no `.code` attribute -- the original check was code-only. Any
+    httpx transport-level failure (timeouts, connection errors) must count
+    as transient, same as a provider 503."""
+    assert resilience.is_transient_error(httpx.ReadTimeout("timed out"))
+    assert resilience.is_transient_error(httpx.ConnectTimeout("timed out"))
+    assert resilience.is_transient_error(httpx.ConnectError("connection refused"))
+
+
+def test_invoke_retries_network_timeout_then_succeeds():
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise httpx.ReadTimeout("timed out")
+        return "ok"
+
+    assert resilience.invoke_with_retry(flaky) == "ok"
+    assert calls["n"] == 2
 
 
 def test_invoke_does_not_retry_non_transient():
