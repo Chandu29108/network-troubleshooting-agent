@@ -26,7 +26,12 @@ class Settings(BaseSettings):
 
     chroma_persist_dir: str = "./chroma_store"
     # Gemini's embedding API (not a local model -- see app/rag/ingest.py for why).
-    embedding_model_name: str = "models/text-embedding-004"
+    # NOTE: "models/text-embedding-004" (the older naming) 404s against the
+    # Gemini Developer API's embedContent endpoint -- confirmed against a real
+    # deploy. "gemini-embedding-001" is the current stable model name for this
+    # API path (langchain_google_genai's own docs/tests use this or the
+    # "-2-preview" variant, never the old "models/..." embedding-004 name).
+    embedding_model_name: str = "gemini-embedding-001"
 
     # Comma-separated in .env, e.g. FRONTEND_ORIGINS=http://localhost:3000,https://app.example.com
     frontend_origins: str = "http://localhost:3000"
