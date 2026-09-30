@@ -88,3 +88,32 @@ async def test_chat_stream_persists_and_streams(client, test_session, monkeypatc
         messages = result.scalars().all()
     roles = sorted(m.role for m in messages)
     assert roles == ["assistant", "user"]
+
+
+class _FailingGraph:
+    """Simulates Gemini's 503 'high demand' error surfacing from the pipeline."""
+
+    async def astream_events(self, inputs, version="v2"):
+        class _Overloaded(Exception):
+            code = 503
+
+        raise _Overloaded("503 UNAVAILABLE raw provider dump")
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+@pytest.mark.asyncio
+async def test_provider_outage_shows_friendly_message_not_raw_error(client, monkeypatch):
+    monkeypatch.setattr(chat_module, "agent_graph", _FailingGraph())
+
+    async with client.stream(
+        "POST", "/api/chat/stream", json={"message": "hello"}
+    ) as response:
+        raw = ""
+        async for chunk in response.aiter_text():
+            raw += chunk
+
+    errors = [e for e in _parse_sse(raw) if e["type"] == "error"]
+    assert len(errors) == 1
+    assert "busy" in errors[0]["message"].lower()
+    assert "503" not in errors[0]["message"]
+    assert "UNAVAILABLE" not in errors[0]["message"]

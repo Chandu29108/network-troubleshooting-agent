@@ -6,13 +6,22 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import chat, documents
 from app.config import get_settings
 from app.core.logging_config import logger
+from app.core.observability import init_sentry
+from app.core.rate_limit import limiter
 from app.db.database import init_db
 
 settings = get_settings()
+
+# Before the app is created, so Sentry can catch anything that goes wrong
+# during startup too (e.g. a bad DATABASE_URL), not just request-time errors.
+init_sentry()
 
 
 @asynccontextmanager
@@ -39,6 +48,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(chat.router)
 app.include_router(documents.router)

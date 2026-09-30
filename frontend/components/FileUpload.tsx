@@ -1,19 +1,21 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { Paperclip, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { uploadDocument } from "@/lib/api";
 
 type Status = { kind: "idle" | "loading" | "success" | "error"; message?: string };
 
 export default function FileUpload({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+  const { getToken } = useAuth();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
     setStatus({ kind: "loading" });
     try {
-      const result = await uploadDocument(file);
+      const result = await uploadDocument(file, getToken);
       setStatus({ kind: "success", message: result.message });
     } catch (err) {
       setStatus({ kind: "error", message: err instanceof Error ? err.message : "Upload failed" });

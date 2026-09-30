@@ -1,0 +1,33 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Lets Render create the backend service from this file in one step
+# ("New +" -> "Blueprint" -> point at this repo) instead of clicking through
+# every setting by hand. Secrets are deliberately NOT in this file
+# (sync: false means "prompt me for this in the dashboard instead") — a
+# render.yaml gets committed to git, and an API key or DB password
+# committed to a public GitHub repo is a real leak, not a hypothetical one.
+services:
+  - type: web
+    name: netagent-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: DATABASE_URL
+        sync: false
+      - key: CHROMA_PERSIST_DIR
+        value: ./chroma_store
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: CLERK_ISSUER
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: ENVIRONMENT
+        value: production

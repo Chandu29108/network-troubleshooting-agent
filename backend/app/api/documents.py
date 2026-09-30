@@ -6,9 +6,11 @@ knowledge base used by retrieval_node, so future diagnoses can cite them.
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from app.core.logging_config import logger
+from app.core.rate_limit import limiter
+from app.core.security import get_current_user_id
 from app.models.schemas import DocumentUploadResponse
 from app.rag.ingest import ingest_file
 
@@ -19,7 +21,12 @@ MAX_FILE_SIZE_MB = 15
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)
-async def upload_document(file: UploadFile = File(...)):
+@limiter.limit("10/hour")
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user_id),
+):
     suffix = Path(file.filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(

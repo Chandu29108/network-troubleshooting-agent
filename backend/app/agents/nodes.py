@@ -22,6 +22,7 @@ from app.agents.prompts import (
 )
 from app.config import get_settings
 from app.core.logging_config import logger
+from app.core.resilience import astream_with_retry, invoke_with_retry
 from app.rag.retriever import retrieve_relevant_docs
 from app.tools.log_parser import parse_router_log
 from app.tools.network_tools import NETWORK_TOOLS
@@ -100,7 +101,7 @@ def router_node(state: AgentState) -> dict:
     llm = _llm(temperature=0)
     prompt = ROUTER_PROMPT.format(message=state["user_message"])
     history_messages = _history_to_messages(state.get("history"))
-    response = llm.invoke([*history_messages, HumanMessage(content=prompt)])
+    response = invoke_with_retry(llm.invoke, [*history_messages, HumanMessage(content=prompt)])
     label = _extract_text(response.content).strip().lower()
     route = "diagnostic" if "diagnostic" in label else "general"
     logger.info("[router_node] route=%s", route)
@@ -124,7 +125,7 @@ def diagnostic_node(state: AgentState) -> dict:
     ]
 
     for _step in range(3):  # hard cap prevents infinite tool-call loops
-        ai_msg: AIMessage = llm.invoke(messages)
+        ai_msg: AIMessage = invoke_with_retry(llm.invoke, messages)
         messages.append(ai_msg)
 
         if not ai_msg.tool_calls:
@@ -180,7 +181,9 @@ async def synthesis_node(state: AgentState) -> dict:
 
     history_messages = _history_to_messages(state.get("history"))
     full_response = ""
-    async for chunk in llm.astream([*history_messages, HumanMessage(content=prompt)]):
+    async for chunk in astream_with_retry(
+        lambda: llm.astream([*history_messages, HumanMessage(content=prompt)])
+    ):
         full_response += _extract_text(chunk.content)
     return {"final_answer": full_response}
 

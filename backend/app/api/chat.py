@@ -14,7 +14,7 @@ We identify "which node is this event from" via LangGraph's built-in
 """
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -22,9 +22,12 @@ from sse_starlette.sse import EventSourceResponse
 from app.agents.graph import agent_graph
 from app.agents.nodes import _extract_text
 from app.core.logging_config import logger
+from app.core.rate_limit import limiter
+from app.core.resilience import friendly_error_message
+from app.core.security import get_current_user_id
 from app.db.database import get_session
 from app.db.models import Conversation, Message
-from app.models.schemas import ChatMessageOut, ChatRequest, ConversationOut
+from app.models.schemas import ChatMessageOut, ChatRequest, ConversationOut, ConversationSummary
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -38,12 +41,18 @@ async def _load_history(session: AsyncSession, conversation_id: str) -> list[dic
     return [{"role": m.role, "content": m.content} for m in result.scalars().all()]
 
 
-async def _ensure_conversation(session: AsyncSession, conversation_id: str | None) -> str:
+async def _ensure_conversation(
+    session: AsyncSession, conversation_id: str | None, user_id: str
+) -> str:
     if conversation_id:
         existing = await session.get(Conversation, conversation_id)
-        if existing:
-            return existing.id
-    convo = Conversation()
+        # Both "doesn't exist" and "exists but belongs to someone else" return
+        # the same 404 — returning 403 for the second case would confirm to
+        # an attacker that a given conversation_id is valid, just not theirs.
+        if existing is None or existing.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return existing.id
+    convo = Conversation(user_id=user_id)
     session.add(convo)
     await session.commit()
     await session.refresh(convo)
@@ -51,8 +60,14 @@ async def _ensure_conversation(session: AsyncSession, conversation_id: str | Non
 
 
 @router.post("/stream")
-async def chat_stream(payload: ChatRequest, session: AsyncSession = Depends(get_session)):
-    conversation_id = await _ensure_conversation(session, payload.conversation_id)
+@limiter.limit("20/minute")
+async def chat_stream(
+    request: Request,
+    payload: ChatRequest,
+    session: AsyncSession = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    conversation_id = await _ensure_conversation(session, payload.conversation_id, user_id)
     history = await _load_history(session, conversation_id)
 
     # Persist the user's message immediately so it's not lost if generation fails
@@ -101,13 +116,36 @@ async def chat_stream(payload: ChatRequest, session: AsyncSession = Depends(get_
 
         except Exception as exc:  # noqa: BLE001
             logger.exception("Agent stream failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+            yield {"event": "error", "data": json.dumps({"message": friendly_error_message(exc)})}
 
     return EventSourceResponse(event_generator())
 
 
+@router.get("/conversations", response_model=list[ConversationSummary])
+async def list_conversations(
+    session: AsyncSession = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    result = await session.execute(
+        select(Conversation)
+        .where(Conversation.user_id == user_id)
+        .order_by(Conversation.created_at.desc())
+    )
+    return [
+        ConversationSummary(conversation_id=c.id, created_at=c.created_at)
+        for c in result.scalars().all()
+    ]
+
+
 @router.get("/conversations/{conversation_id}", response_model=ConversationOut)
-async def get_conversation(conversation_id: str, session: AsyncSession = Depends(get_session)):
+async def get_conversation(
+    conversation_id: str,
+    session: AsyncSession = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    existing = await session.get(Conversation, conversation_id)
+    if existing is None or existing.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     history = await _load_history(session, conversation_id)
     return ConversationOut(
         conversation_id=conversation_id,
