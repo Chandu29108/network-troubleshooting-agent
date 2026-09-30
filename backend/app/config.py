@@ -14,14 +14,23 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     google_api_key: str
-    gemini_model: str = "gemini-1.5-flash"
+    # NOTE: the "1.5" model generation (gemini-1.5-flash, gemini-1.5-flash-8b)
+    # has been retired -- it's absent entirely from the installed SDK's own
+    # model-profile data, and gemini-1.5-flash-8b 404s in production with
+    # "is not found for API version v1beta, or is not supported for
+    # generateContent". "-latest" aliases (gemini-flash-latest,
+    # gemini-flash-lite-latest) are the current model names and are what's
+    # actually deployed today (see .env.example's GEMINI_MODEL).
+    gemini_model: str = "gemini-flash-latest"
     # Used only when the primary model is down long enough to exhaust its own
     # retry budget (see app/core/resilience.py: invoke_with_retry_and_fallback).
-    # A smaller/cheaper tier tends to sit on a separate capacity pool from the
-    # main flash model, so it can still be up during a "high demand" 503
-    # streak on gemini-1.5-flash -- confirmed against a real production log
-    # showing 4 straight retries (~15s) all hitting 503 before giving up.
-    gemini_fallback_model: str = "gemini-1.5-flash-8b"
+    # gemini-flash-lite-latest is a real, fully tool-calling-capable chat
+    # model (confirmed against the installed SDK's model-profile data) on a
+    # separate "lite" capacity tier from the main flash model, so it can
+    # still be up during a "high demand" 503 streak on gemini-flash-latest --
+    # confirmed against a real production log showing 4 straight retries
+    # (~15s) all hitting 503 before giving up.
+    gemini_fallback_model: str = "gemini-flash-lite-latest"
 
     # Your Clerk instance's issuer URL, e.g. https://your-app-name.clerk.accounts.dev
     # (dev instance) or https://clerk.yourdomain.com (prod, custom domain).
