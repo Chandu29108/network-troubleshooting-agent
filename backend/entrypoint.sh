@@ -1,11 +1,22 @@
 #!/bin/sh
-# Runs on every container start, before the app comes up. `alembic upgrade
-# head` is idempotent — already-applied migrations are skipped — so this is
-# safe to run on every deploy, not just the first one. It works for both
-# SQLite (a trivial no-op set of DDL) and Postgres (the real target), so
-# there's one code path instead of an if/else guessing which DB is in use.
+# Runs on every container start, as root (the Dockerfile no longer switches
+# to the appuser before this script — see the comment there for why).
+#
+# `setcap` grants ping/traceroute the raw-socket access they need, without
+# running the whole app as root. This has to happen here, at container
+# *start*, not as a `docker build` step — some cloud build services
+# (Render included) sandbox the build itself and block setting Linux file
+# capabilities there, even though the resulting container is unrestricted
+# at runtime. Safe to run on every start: setcap is idempotent, it just
+# re-applies the same capability each time.
 set -e
 
-alembic upgrade head
+setcap cap_net_raw+ep /bin/ping
+setcap cap_net_raw+ep /usr/bin/traceroute
 
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+# `alembic upgrade head` is idempotent (already-applied migrations are
+# skipped), safe on every deploy, and works for both SQLite and Postgres.
+# Everything from here on runs as appuser, not root — `su` (invoked by
+# root) needs no password to switch to another user, so this is the
+# hand-off point where root's job ends and the actual app takes over.
+exec su -s /bin/sh appuser -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
