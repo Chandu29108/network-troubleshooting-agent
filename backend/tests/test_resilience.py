@@ -97,8 +97,91 @@ def test_invoke_does_not_retry_non_transient():
     assert calls["n"] == 1
 
 
+def test_invoke_falls_back_after_primary_exhausted():
+    """Primary always 503s; fallback should be tried and succeed."""
+    primary_calls = {"n": 0}
+    fallback_calls = {"n": 0}
+
+    def primary():
+        primary_calls["n"] += 1
+        raise FakeAPIError(503)
+
+    def fallback():
+        fallback_calls["n"] += 1
+        return "ok from fallback"
+
+    result = resilience.invoke_with_retry_and_fallback(primary, fallback)
+    assert result == "ok from fallback"
+    assert primary_calls["n"] == resilience.MAX_ATTEMPTS
+    assert fallback_calls["n"] == 1
+
+
+def test_invoke_does_not_fall_back_for_non_transient_error():
+    fallback_calls = {"n": 0}
+
+    def primary():
+        raise FakeAPIError(400)
+
+    def fallback():
+        fallback_calls["n"] += 1
+        return "should not be called"
+
+    with pytest.raises(FakeAPIError):
+        resilience.invoke_with_retry_and_fallback(primary, fallback)
+    assert fallback_calls["n"] == 0
+
+
+def test_invoke_raises_if_both_primary_and_fallback_exhausted():
+    def primary():
+        raise FakeAPIError(503)
+
+    def fallback():
+        raise FakeAPIError(503)
+
+    with pytest.raises(FakeAPIError):
+        resilience.invoke_with_retry_and_fallback(primary, fallback)
+
+
 async def _collect(factory):
     return [c async for c in resilience.astream_with_retry(factory)]
+
+
+async def _collect_with_fallback(primary_factory, fallback_factory):
+    return [
+        c
+        async for c in resilience.astream_with_retry_and_fallback(
+            primary_factory, fallback_factory
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_falls_back_after_primary_exhausted():
+    async def primary_factory():
+        raise FakeAPIError(503)
+        yield  # pragma: no cover -- makes this an async generator function
+
+    async def fallback_factory():
+        yield "from fallback"
+
+    result = await _collect_with_fallback(primary_factory, fallback_factory)
+    assert result == ["from fallback"]
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_fall_back_after_partial_primary_output():
+    """Once the primary has already streamed visible text, a transient
+    failure should raise rather than switch models mid-answer."""
+
+    async def primary_factory():
+        yield "partial"
+        raise FakeAPIError(503)
+
+    async def fallback_factory():
+        yield "should not appear"  # pragma: no cover
+
+    with pytest.raises(FakeAPIError):
+        await _collect_with_fallback(primary_factory, fallback_factory)
 
 
 @pytest.mark.asyncio

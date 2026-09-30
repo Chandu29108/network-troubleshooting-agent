@@ -15,6 +15,13 @@ class Settings(BaseSettings):
 
     google_api_key: str
     gemini_model: str = "gemini-1.5-flash"
+    # Used only when the primary model is down long enough to exhaust its own
+    # retry budget (see app/core/resilience.py: invoke_with_retry_and_fallback).
+    # A smaller/cheaper tier tends to sit on a separate capacity pool from the
+    # main flash model, so it can still be up during a "high demand" 503
+    # streak on gemini-1.5-flash -- confirmed against a real production log
+    # showing 4 straight retries (~15s) all hitting 503 before giving up.
+    gemini_fallback_model: str = "gemini-1.5-flash-8b"
 
     # Your Clerk instance's issuer URL, e.g. https://your-app-name.clerk.accounts.dev
     # (dev instance) or https://clerk.yourdomain.com (prod, custom domain).

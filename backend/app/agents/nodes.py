@@ -22,7 +22,7 @@ from app.agents.prompts import (
 )
 from app.config import get_settings
 from app.core.logging_config import logger
-from app.core.resilience import astream_with_retry, invoke_with_retry
+from app.core.resilience import astream_with_retry_and_fallback, invoke_with_retry_and_fallback
 from app.rag.retriever import retrieve_relevant_docs
 from app.tools.log_parser import parse_router_log
 from app.tools.network_tools import NETWORK_TOOLS
@@ -42,14 +42,20 @@ class AgentState(TypedDict, total=False):
     final_answer: str
 
 
-def _llm(temperature: float = 0.2) -> ChatGoogleGenerativeAI:
+def _llm(temperature: float = 0.2, model_name: str | None = None) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
+        model=model_name or settings.gemini_model,
         google_api_key=settings.google_api_key,
         temperature=temperature,
         timeout=30,       # fail loudly after 30s instead of hanging silently
         max_retries=1,    # don't let internal auto-retry compound the wait
     )
+
+
+def _llm_pair(temperature: float) -> tuple[ChatGoogleGenerativeAI, ChatGoogleGenerativeAI]:
+    """Primary model + a fallback on a separate capacity pool, used together
+    via invoke_with_retry_and_fallback / astream_with_retry_and_fallback."""
+    return _llm(temperature), _llm(temperature, model_name=settings.gemini_fallback_model)
 
 
 def _history_to_messages(history: list[dict] | None, limit: int = 12) -> list:
@@ -98,10 +104,11 @@ def _extract_text(content) -> str:
 
 def router_node(state: AgentState) -> dict:
     logger.info("[router_node] classifying message")
-    llm = _llm(temperature=0)
+    llm, fallback_llm = _llm_pair(temperature=0)
     prompt = ROUTER_PROMPT.format(message=state["user_message"])
     history_messages = _history_to_messages(state.get("history"))
-    response = invoke_with_retry(llm.invoke, [*history_messages, HumanMessage(content=prompt)])
+    messages = [*history_messages, HumanMessage(content=prompt)]
+    response = invoke_with_retry_and_fallback(llm.invoke, fallback_llm.invoke, messages)
     label = _extract_text(response.content).strip().lower()
     route = "diagnostic" if "diagnostic" in label else "general"
     logger.info("[router_node] route=%s", route)
@@ -115,7 +122,9 @@ def diagnostic_node(state: AgentState) -> dict:
     it produces a plain-text diagnosis instead of another tool call.
     """
     logger.info("[diagnostic_node] starting tool-calling loop")
-    llm = _llm(temperature=0.2).bind_tools(ALL_TOOLS)
+    llm, fallback_llm = _llm_pair(temperature=0.2)
+    llm = llm.bind_tools(ALL_TOOLS)
+    fallback_llm = fallback_llm.bind_tools(ALL_TOOLS)
     prompt = DIAGNOSTIC_AGENT_PROMPT.format(message=state["user_message"])
     history_messages = _history_to_messages(state.get("history"))
     messages: list = [
@@ -125,7 +134,9 @@ def diagnostic_node(state: AgentState) -> dict:
     ]
 
     for _step in range(3):  # hard cap prevents infinite tool-call loops
-        ai_msg: AIMessage = invoke_with_retry(llm.invoke, messages)
+        ai_msg: AIMessage = invoke_with_retry_and_fallback(
+            llm.invoke, fallback_llm.invoke, messages
+        )
         messages.append(ai_msg)
 
         if not ai_msg.tool_calls:
@@ -167,7 +178,7 @@ async def synthesis_node(state: AgentState) -> dict:
     it's the user-facing output.
     """
     logger.info("[synthesis_node] generating final answer, route=%s", state.get("route"))
-    llm = _llm(temperature=0.3)
+    llm, fallback_llm = _llm_pair(temperature=0.3)
     context = _format_context(state.get("retrieved_docs", []))
 
     if state.get("route") == "diagnostic":
@@ -180,9 +191,11 @@ async def synthesis_node(state: AgentState) -> dict:
         prompt = GENERAL_PROMPT.format(context=context, message=state["user_message"])
 
     history_messages = _history_to_messages(state.get("history"))
+    stream_messages = [*history_messages, HumanMessage(content=prompt)]
     full_response = ""
-    async for chunk in astream_with_retry(
-        lambda: llm.astream([*history_messages, HumanMessage(content=prompt)])
+    async for chunk in astream_with_retry_and_fallback(
+        lambda: llm.astream(stream_messages),
+        lambda: fallback_llm.astream(stream_messages),
     ):
         full_response += _extract_text(chunk.content)
     return {"final_answer": full_response}

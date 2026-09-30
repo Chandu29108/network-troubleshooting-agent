@@ -74,26 +74,61 @@ def _delay_for(attempt: int) -> float:
     return base + random.uniform(0, base * 0.25)  # noqa: S311
 
 
-def invoke_with_retry(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+def invoke_with_retry(
+    fn: Callable[..., Any], *args: Any, max_attempts: int = MAX_ATTEMPTS, **kwargs: Any
+) -> Any:
     """Call a blocking LLM function, retrying transient errors. Runs in a
     worker thread under LangGraph, so time.sleep here doesn't block the loop."""
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         try:
             return fn(*args, **kwargs)
         except Exception as exc:
-            if not is_transient_error(exc) or attempt == MAX_ATTEMPTS:
+            if not is_transient_error(exc) or attempt == max_attempts:
                 raise
             delay = _delay_for(attempt)
             logger.warning(
                 "LLM transient error (code=%s), retry %d/%d in %.1fs",
-                getattr(exc, "code", "?"), attempt, MAX_ATTEMPTS - 1, delay,
+                getattr(exc, "code", "?"), attempt, max_attempts - 1, delay,
             )
             time.sleep(delay)
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
+# Attempts given to the fallback model once the primary is confirmed down --
+# short, because by this point the primary has already burned ~15s retrying.
+FALLBACK_MAX_ATTEMPTS = 2
+
+
+def invoke_with_retry_and_fallback(
+    primary_fn: Callable[..., Any], fallback_fn: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
+    """
+    Call the primary model with its full retry budget, and if it's still
+    failing after that (a sustained provider outage, not a blip), make a
+    short additional attempt against a fallback model on a separate
+    capacity pool before giving up entirely.
+
+    Real production logs showed a "high demand" 503 streak on Gemini's main
+    flash model outlast even a widened ~15s / 5-attempt retry budget. A
+    smaller fallback tier (e.g. a "-8b" variant) is a different quota pool
+    and often stays up through the same outage.
+    """
+    try:
+        return invoke_with_retry(primary_fn, *args, **kwargs)
+    except Exception as exc:
+        if not is_transient_error(exc):
+            raise
+        logger.warning(
+            "Primary model exhausted its retry budget, falling back to secondary model"
+        )
+        return invoke_with_retry(
+            fallback_fn, *args, max_attempts=FALLBACK_MAX_ATTEMPTS, **kwargs
+        )
+
+
 async def astream_with_retry(
     stream_factory: Callable[[], AsyncIterator[Any]],
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> AsyncIterator[Any]:
     """
     Stream chunks from the LLM, retrying transient failures — but only if
@@ -101,7 +136,7 @@ async def astream_with_retry(
     user has already seen partial text, restarting would duplicate or
     garble the answer, so a mid-stream failure is raised instead.
     """
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         yielded_any = False
         try:
             async for chunk in stream_factory():
@@ -109,11 +144,40 @@ async def astream_with_retry(
                 yield chunk
             return
         except Exception as exc:
-            if yielded_any or not is_transient_error(exc) or attempt == MAX_ATTEMPTS:
+            if yielded_any or not is_transient_error(exc) or attempt == max_attempts:
                 raise
             delay = _delay_for(attempt)
             logger.warning(
                 "LLM stream transient error (code=%s), retry %d/%d in %.1fs",
-                getattr(exc, "code", "?"), attempt, MAX_ATTEMPTS - 1, delay,
+                getattr(exc, "code", "?"), attempt, max_attempts - 1, delay,
             )
             await asyncio.sleep(delay)
+
+
+async def astream_with_retry_and_fallback(
+    primary_factory: Callable[[], AsyncIterator[Any]],
+    fallback_factory: Callable[[], AsyncIterator[Any]],
+) -> AsyncIterator[Any]:
+    """
+    Stream from the primary model, retrying transient errors as
+    astream_with_retry does. If the primary is still failing after
+    exhausting its own retry budget, make one short additional attempt
+    against a fallback model on a separate capacity pool -- but only if
+    nothing has been shown to the user yet; once partial text is visible,
+    switching models mid-answer would duplicate or garble it, same
+    restriction as astream_with_retry's own mid-stream rule.
+    """
+    yielded_any = False
+    try:
+        async for chunk in astream_with_retry(primary_factory):
+            yielded_any = True
+            yield chunk
+        return
+    except Exception as exc:
+        if yielded_any or not is_transient_error(exc):
+            raise
+        logger.warning(
+            "Primary model exhausted its retry budget, falling back to secondary model"
+        )
+        async for chunk in astream_with_retry(fallback_factory, max_attempts=FALLBACK_MAX_ATTEMPTS):
+            yield chunk
