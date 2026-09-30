@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/netagent.db"
 
     chroma_persist_dir: str = "./chroma_store"
-    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # Gemini's embedding API (not a local model -- see app/rag/ingest.py for why).
+    embedding_model_name: str = "models/text-embedding-004"
 
     # Comma-separated in .env, e.g. FRONTEND_ORIGINS=http://localhost:3000,https://app.example.com
     frontend_origins: str = "http://localhost:3000"

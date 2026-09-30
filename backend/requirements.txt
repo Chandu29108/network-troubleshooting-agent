@@ -25,13 +25,15 @@ langchain-google-genai==4.2.7
 google-genai==2.11.0
 langgraph>=0.2.45
 
-# --- Vector store & embeddings (fully local, no API cost) ---
+# --- Vector store & embeddings ---
+# NOTE: embeddings are computed via Gemini's API (see app/rag/ingest.py),
+# not a local model -- sentence-transformers/torch were removed here
+# specifically because their memory footprint OOM'd on Render's free tier
+# (512MB) just from being imported, before serving a single request.
 chromadb==0.5.18
-sentence-transformers==3.2.1
 
 # --- Document parsing (for uploaded router docs/logs) ---
 pypdf==5.0.1
-unstructured==0.16.0
 
 # --- Database (SQLite for tests, Postgres for real use — DATABASE_URL decides) ---
 sqlalchemy==2.0.35

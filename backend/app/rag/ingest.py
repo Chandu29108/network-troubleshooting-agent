@@ -1,17 +1,21 @@
 """
 Ingestion pipeline: file -> text -> chunks -> embeddings -> Chroma.
 
-Why local embeddings (sentence-transformers) instead of an API embedding
-model: embeddings are computed for every chunk of every uploaded doc, which
-is high-volume compared to LLM calls. Running them locally means uploading
-documents never touches your Gemini free-tier quota and never costs money,
-no matter how many docs you ingest.
+Uses Gemini's embedding API instead of a local sentence-transformers model.
+The local model's transitive PyTorch dependency pushed the backend's memory
+footprint well past Render's free-tier 512MB cap -- import alone (before
+serving a single request) was enough to OOM the container. Calling the
+Gemini API for embeddings instead removes PyTorch from the dependency tree
+entirely. The trade-off: embedding calls now count against the same
+GOOGLE_API_KEY quota as chat completions, but embeddings are cheap and the
+free tier's quota comfortably covers a portfolio-scale amount of document
+uploads.
 """
 from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config import get_settings
@@ -22,12 +26,15 @@ settings = get_settings()
 _embeddings = None
 
 
-def get_embeddings() -> HuggingFaceEmbeddings:
-    """Lazily load the embedding model once (it's a ~90MB download on first run)."""
+def get_embeddings() -> GoogleGenerativeAIEmbeddings:
+    """Lazily create the embeddings client once (a thin API wrapper, no local model to load)."""
     global _embeddings
     if _embeddings is None:
-        logger.info("Loading local embedding model: %s", settings.embedding_model_name)
-        _embeddings = HuggingFaceEmbeddings(model_name=settings.embedding_model_name)
+        logger.info("Using Gemini embedding model: %s", settings.embedding_model_name)
+        _embeddings = GoogleGenerativeAIEmbeddings(
+            model=settings.embedding_model_name,
+            google_api_key=settings.google_api_key,
+        )
     return _embeddings
 
 
