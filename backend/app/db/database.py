@@ -37,7 +37,27 @@ def _engine_kwargs(database_url: str) -> dict:
     connection args of its own.
     """
     if database_url.startswith("postgresql+asyncpg") and "ssl" not in database_url:
-        return {"connect_args": {"ssl": True}}
+        return {
+            "connect_args": {"ssl": True},
+            # Hosted/serverless Postgres (Neon included) silently closes
+            # idle connections server-side after a timeout. A production
+            # traceback caught this directly: the app's own /health checks
+            # kept the container "warm" every ~15s but never touch the
+            # database, so the pooled DB connection sat idle, got dropped
+            # by Neon, and the next real request failed with
+            # `asyncpg.exceptions._base.InterfaceError: connection is
+            # closed` -- SQLAlchemy's pool didn't know the connection was
+            # dead until it tried to use it.
+            #
+            # pool_pre_ping tests each connection with a lightweight ping
+            # before handing it out, transparently reconnecting if it's
+            # dead, instead of surfacing the error to the request.
+            # pool_recycle proactively retires connections after 5 minutes
+            # so they never sit idle long enough for Neon to kill them
+            # first. Both are no-ops for SQLite (not passed there).
+            "pool_pre_ping": True,
+            "pool_recycle": 300,
+        }
     return {}
 
 
