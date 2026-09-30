@@ -23,8 +23,14 @@ import httpx
 
 from app.core.logging_config import logger
 
-MAX_ATTEMPTS = 3
-BASE_DELAY_SECONDS = 1.0  # waits ~1s, then ~2s (plus jitter) between attempts
+MAX_ATTEMPTS = 5
+# Waits ~1s, 2s, 4s, 8s (plus jitter) between attempts -- ~15s of total
+# patience before giving up. Widened from 3 attempts (~3s total) after
+# real production testing showed Gemini's "high demand" 503s sometimes
+# outlast a 3-second retry window; this gives short provider-side outages
+# more room to clear before surfacing a user-facing failure, without
+# making a genuinely-broken request hang for an unreasonable time.
+BASE_DELAY_SECONDS = 1.0
 
 # Temporary conditions worth retrying: rate limit + provider-side outages.
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
